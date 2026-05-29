@@ -1,107 +1,143 @@
-// src/content/engine.js - Unified Multi-Platform Scraper Engine
+// src/content/engine.js - Multi-Platform Scraper Engine
 
+// ── Selector Runner ──
+// Strict fail-empty: returns "" if nothing found. No fallbacks, no guessing.
 function runStrictSelectors(selectors) {
   const extracted = {};
-  
-  for (const [key, multipleQueries] of Object.entries(selectors)) {
+
+  for (const [key, selectorString] of Object.entries(selectors)) {
     try {
-      let foundElement = null;
-      let textValue = '';
-      
-      const queries = multipleQueries.split(',').map(q => q.trim());
+      let value = '';
+      const queries = selectorString.split(',').map(q => q.trim());
+
       for (const query of queries) {
         const el = document.querySelector(query);
-        if (el) {
-          foundElement = el;
-          break;
-        }
-      }
+        if (!el) continue;
 
-      if (foundElement) {
         if (key === 'Image') {
-          textValue = foundElement.content || foundElement.src || foundElement.getAttribute("data-delayed-url") || foundElement.getAttribute("data-old-hires") || '';
-        } else if (foundElement.tagName === 'META') {
-          textValue = foundElement.content;
+          value = el.content || el.src
+            || el.getAttribute('data-delayed-url')
+            || el.getAttribute('data-old-hires')
+            || '';
+        } else if (el.tagName === 'META') {
+          value = el.content || '';
         } else {
-          textValue = foundElement.textContent;
+          // For multi-element matches (e.g. Amazon bullet points), join text
+          const allEls = document.querySelectorAll(query);
+          if (allEls.length > 1) {
+            value = Array.from(allEls)
+              .map(e => e.textContent.trim())
+              .filter(Boolean)
+              .join('\n');
+          } else {
+            value = el.textContent.trim();
+          }
         }
+
+        if (value.trim()) break; // Stop at first hit
       }
 
-      // Universal metadata extraction safety backup net
-      if (!textValue || textValue.trim() === '') {
-        if (key === 'Name') {
-          const ogTitle = document.querySelector('meta[property="og:title"]');
-          textValue = ogTitle ? ogTitle.content : document.title;
-        } else if (key === 'Description') {
-          const ogDesc = document.querySelector('meta[property="og:description"]') || document.querySelector('meta[name="description"]');
-          textValue = ogDesc ? ogDesc.content : '';
-        } else if (key === 'Image') {
-          const ogImg = document.querySelector('meta[property="og:image"]');
-          textValue = ogImg ? ogImg.content : '';
-        }
+      // Clean up name: strip trailing pipe sections (e.g. "Page Name | LinkedIn")
+      if (key === 'Name' && value) {
+        value = value.replace(/\s*\|.*$/, '').trim();
       }
 
-      if (textValue) {
-        textValue = textValue.trim();
-        if (key === 'Name') {
-          textValue = textValue.replace(/\s*\|.*$/, "").replace(/\s*\|\s*Facebook.*$/i, "").trim();
-        }
-        extracted[key] = textValue;
-      } else {
-        extracted[key] = '';
-      }
+      extracted[key] = value.trim();
 
     } catch (e) {
       extracted[key] = '';
     }
   }
+
   return extracted;
 }
 
+// ── Selector Path Calculator ──
+// Climbs the DOM to build a resilient CSS selector.
+// Prioritises IDs and semantic tags. Ignores dynamic utility classes.
 function calculatePathSelector(el) {
   if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
+
+  // ID is the most reliable anchor
   if (el.id) return `#${el.id}`;
-  
-  let tag = el.tagName.toLowerCase();
+
+  const tag = el.tagName.toLowerCase();
+
+  // Semantic heading tags are reliable on their own
   if (['h1', 'h2', 'h3', 'title'].includes(tag)) return tag;
 
-  if (el.className && typeof el.className === 'string') {
-    const cleanClasses = el.className.split(/\s+/)
-      .filter(c => c && !c.match(/(^x[0-9]|_|\-[0-9]|^app)/i))
-      .join('.');
-    if (cleanClasses) return `${tag}.${cleanClasses}`;
+  // Meta tags — use property or name attribute as selector
+  if (tag === 'meta') {
+    if (el.getAttribute('property')) return `meta[property="${el.getAttribute('property')}"]`;
+    if (el.getAttribute('name')) return `meta[name="${el.getAttribute('name')}"]`;
   }
-  return calculatePathSelector(el.parentNode) + ' > ' + tag;
+
+  // Filter out dynamic/framework-generated class names
+  // (short random classes, classes starting with numbers, underscore-heavy names)
+  if (el.className && typeof el.className === 'string') {
+    const stableClasses = el.className.split(/\s+/).filter(c =>
+      c.length > 2 &&
+      !c.match(/^[0-9]/) &&
+      !c.match(/^x[a-z0-9]{2,}/i) &&
+      !c.match(/(_[a-z0-9]{4,}|--[a-z0-9]{4,})/i) &&
+      !c.match(/^(css|sc|emotion|style)-/i)
+    );
+    if (stableClasses.length) {
+      return `${tag}.${stableClasses.join('.')}`;
+    }
+  }
+
+  // Recurse up the tree
+  const parent = el.parentElement;
+  if (!parent || parent.tagName === 'BODY') return tag;
+  return `${calculatePathSelector(parent)} > ${tag}`;
 }
 
+// ── Text-to-Element Locator ──
+// Searches DOM for an exact text match in a leaf node.
 function locateTextContainer(textString) {
-  const cleanQuery = textString.trim();
-  if (!cleanQuery || cleanQuery.length < 2) return null;
+  const needle = textString.trim();
+  if (!needle || needle.length < 2) return null;
 
-  const nodes = document.querySelectorAll('h1, h2, h3, span, div, p, a, li, td, th');
-  for (const node of nodes) {
-    if (node.textContent.trim().includes(cleanQuery) && node.children.length === 0) {
+  // Prioritise meaningful content elements
+  const candidates = document.querySelectorAll(
+    'h1, h2, h3, h4, span, p, a, div, li, td, th, title'
+  );
+
+  // First pass: exact leaf node match
+  for (const node of candidates) {
+    if (node.children.length === 0 && node.textContent.trim() === needle) {
       return node;
     }
   }
+
+  // Second pass: contains match in leaf node (handles minor whitespace wrapping)
+  for (const node of candidates) {
+    if (node.children.length === 0 && node.textContent.trim().includes(needle)) {
+      return node;
+    }
+  }
+
   return null;
 }
 
-// Fixed Router
+// ── Message Router ──
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "runSelectors") {
-    // Fixed: Now accurately targets the internal execution function name
+
+  if (request.action === 'runSelectors') {
     const data = runStrictSelectors(request.selectors);
-    sendResponse({ success: true, data: data });
-  } 
-  else if (request.action === "traceTextSelector") {
-    const targetElement = locateTextContainer(request.text);
-    if (targetElement) {
-      const computedPath = calculatePathSelector(targetElement);
-      sendResponse({ success: true, selector: computedPath });
+    sendResponse({ success: true, data });
+  }
+
+  else if (request.action === 'traceTextSelector') {
+    const el = locateTextContainer(request.text);
+    if (el) {
+      const selector = calculatePathSelector(el);
+      sendResponse({ success: true, selector });
     } else {
       sendResponse({ success: false });
     }
   }
-  return true;
+
+  return true; // Keep message channel open for async
 });
