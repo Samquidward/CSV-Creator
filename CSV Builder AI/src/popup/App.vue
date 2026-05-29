@@ -1,120 +1,150 @@
 <template>
   <div class="app-container">
+
+    <!-- Header -->
     <div class="app-header">
-      <h1>Omni Capture Hub</h1>
-      <span class="badge">Stash: {{ queue.length }}</span>
+      <div class="logo">Ω</div>
+      <div class="header-text">
+        <h1>Omni Capture</h1>
+        <p>MULTI-PLATFORM SCRAPER</p>
+      </div>
+      <span class="badge">Queue: {{ queue.length }}</span>
     </div>
 
+    <!-- Not on a supported platform -->
     <div v-if="!currentPlatform.detected" class="alert-view">
-      <p>Pipeline Offline. Navigate to a supported record asset profile page.</p>
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="1.5"/><path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      <p>Navigate to a supported platform page to begin.</p>
+      <div class="supported-list">
+        <span v-for="key in Object.keys(recipes)" :key="key">{{ recipes[key].Platform }}</span>
+      </div>
     </div>
 
-    <div v-else class="workspace-form">
+    <!-- Workspace -->
+    <div v-else class="workspace">
+
+      <!-- Platform meta row -->
       <div class="meta-row">
-        <span><strong>Vertical:</strong> {{ workspaceData.Product }}</span>
-        <span><strong>Platform:</strong> {{ workspaceData.Platform }}</span>
+        <div class="meta-pill">{{ workspaceData.Product }}</div>
+        <div class="meta-pill accent">{{ workspaceData.Platform }}</div>
+        <div class="meta-pill" v-if="workspaceData.PlatformType">{{ workspaceData.PlatformType }}</div>
       </div>
 
+      <!-- Inline status message -->
+      <div class="status-bar" :class="statusType">
+        <div class="status-dot"></div>
+        <span>{{ statusMessage }}</span>
+      </div>
+
+      <!-- Form -->
       <div class="scrollable-form">
-        
+
         <div class="form-group">
-          <label>Name Mapping Target *</label>
-          <input 
-            v-model="workspaceData.Name" 
-            @paste="handleLearningPaste($event, 'Name')" 
-            @input="saveTemporaryState"
-            placeholder="Paste text here to map element manually..."
+          <label>Name <span class="required">*</span></label>
+          <input
+            v-model="workspaceData.Name"
+            @paste="handlePaste($event, 'Name')"
+            @input="saveState"
+            placeholder="Auto-filled or paste to teach…"
             :class="{ 'field-alert': !workspaceData.Name }"
           />
+          <span v-if="learnedFields.Name" class="learned-tag">✓ Learned</span>
         </div>
 
         <div class="form-group">
-          <label>Profile Description Data *</label>
-          <textarea 
-            v-model="workspaceData.Description" 
-            @paste="handleLearningPaste($event, 'Description')" 
-            @input="saveTemporaryState"
-            placeholder="Paste text here to map element manually..."
+          <label>Description <span class="required">*</span></label>
+          <textarea
+            v-model="workspaceData.Description"
+            @paste="handlePaste($event, 'Description')"
+            @input="saveState"
+            placeholder="Auto-filled or paste to teach…"
             :class="{ 'field-alert': !workspaceData.Description }"
           ></textarea>
+          <span v-if="learnedFields.Description" class="learned-tag">✓ Learned</span>
         </div>
 
         <div class="form-group">
-          <label>Image Resource Reference</label>
-          <input 
-            v-model="workspaceData.Image" 
-            @paste="handleLearningPaste($event, 'Image')" 
-            @input="saveTemporaryState"
-            placeholder="Paste asset URL link text here..."
+          <label>Image URL</label>
+          <input
+            v-model="workspaceData.Image"
+            @paste="handlePaste($event, 'Image')"
+            @input="saveState"
+            placeholder="Auto-filled or paste image URL…"
             :class="{ 'field-alert': !workspaceData.Image }"
           />
+          <span v-if="learnedFields.Image" class="learned-tag">✓ Learned</span>
         </div>
 
-        <div class="section-divider">Template Ingestion Criteria</div>
+        <div class="section-divider">Metadata</div>
 
-        <div class="form-group">
-          <label>Platform ID (e.g. ASIN / App Pkg) <span v-if="workspaceData.Product === 'MARKETPLACES'">*</span></label>
-          <input 
-            v-model="workspaceData.PlatformID" 
-            @paste="handleLearningPaste($event, 'PlatformID')"
-            @input="saveTemporaryState"
-            placeholder="Required for Marketplaces"
-            :class="{ 'field-alert': !workspaceData.PlatformID && workspaceData.Product === 'MARKETPLACES' }"
+        <!-- PlatformID — only for MARKETPLACES -->
+        <div class="form-group" v-if="workspaceData.Product === 'MARKETPLACES'">
+          <label>Platform ID (ASIN) <span class="required">*</span></label>
+          <input
+            v-model="workspaceData.PlatformID"
+            @input="saveState"
+            placeholder="e.g. B07FXV75QC"
+            :class="{ 'field-alert': !workspaceData.PlatformID }"
+          />
+        </div>
+
+        <!-- PlatformType — only for SOCIAL -->
+        <div class="form-group" v-if="workspaceData.Product === 'SOCIAL'">
+          <label>Platform Type <span class="required">*</span></label>
+          <input
+            v-model="workspaceData.PlatformType"
+            @input="saveState"
+            placeholder="Page, Profile, or Group"
+            :class="{ 'field-alert': !workspaceData.PlatformType }"
           />
         </div>
 
         <div class="form-group">
-          <label>Platform Type <span v-if="workspaceData.Product === 'SOCIAL'">*</span></label>
-          <input 
-            v-model="workspaceData.PlatformType" 
-            @paste="handleLearningPaste($event, 'PlatformType')"
-            @input="saveTemporaryState"
-            placeholder="e.g. Page, Profile, Group"
-            :class="{ 'field-alert': !workspaceData.PlatformType && workspaceData.Product === 'SOCIAL' }"
-          />
+          <label>Owner / Handle</label>
+          <input v-model="workspaceData.Owner" @input="saveState" placeholder="Auto-extracted from URL" />
         </div>
 
         <div class="form-group">
-          <label>Owner / Handle Slug</label>
-          <input 
-            v-model="workspaceData.Owner" 
-            @input="saveTemporaryState"
-            placeholder="Unique profile handle or brand owner"
-          />
+          <label>Locale</label>
+          <input v-model="workspaceData.Locale" @input="saveState" placeholder="e.g. en-US //or// US" />
         </div>
 
         <div class="form-group">
-          <label>Locale / Country Code</label>
-          <input 
-            v-model="workspaceData.Locale" 
-            @input="saveTemporaryState"
-            placeholder="e.g. en-US, pt-BR, US"
-          />
+          <label>URL</label>
+          <input v-model="workspaceData.Url" @input="saveState" readonly class="readonly-field" />
         </div>
+
       </div>
 
+      <!-- Actions -->
       <div class="button-footer">
-        <button @click="stashToQueue" :disabled="!isFormValid" class="btn-confirm">
+        <button @click="confirmEntry" :disabled="!isFormValid" class="btn-confirm">
           Confirm Entry
         </button>
-        <button @click="copySnippet" class="btn-snippet" title="Generate raw text patch asset code">
+        <button
+          @click="copySnippet"
+          class="btn-snippet"
+          :class="{ 'has-learned': hasLearnedSelectors }"
+          title="Copy learned selectors as code block"
+        >
           Copy Snippet
         </button>
       </div>
 
-      <div class="queue-summary-actions">
-        <button :disabled="!queue.length" @click="downloadMasterCSV" class="btn-download">
-          Download Export CSV ({{ queue.length }})
+      <!-- Queue actions -->
+      <div class="queue-actions">
+        <button :disabled="!queue.length" @click="downloadCSV" class="btn-download">
+          ↓ Download CSV ({{ queue.length }})
         </button>
-        <button @click="openDeveloperOptions" class="btn-link">Open Recipes Engine Manager →</button>
+        <button @click="openOptions" class="btn-link">Recipes Manager →</button>
       </div>
+
     </div>
   </div>
 </template>
 
 <script>
-// Replace your entire <script> section in App.vue with this updated logic
-import { ref, onMounted, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { masterRecipes } from '../config/recipes.js';
 
 export default {
@@ -122,147 +152,217 @@ export default {
     const queue = ref([]);
     const currentTab = ref(null);
     const currentPlatform = ref({ detected: false, domainKey: '', config: null });
-    
+    const statusMessage = ref('Detecting platform…');
+    const statusType = ref('neutral');
+    const learnedFields = ref({ Name: false, Description: false, Image: false });
+    const runtimeSelectors = ref({});
+    const recipes = masterRecipes;
+
     const workspaceData = ref({
       Product: '', Platform: '', PlatformID: '', PlatformType: '',
-      Name: '', Url: '', Status: 'Active', Locale: 'en-US', Image: '', Description: '', Owner: ''
+      Name: '', Url: '', Status: 'Active', Locale: '', Image: '', Description: '', Owner: ''
     });
 
-    const runtimeSelectors = ref({});
-
+    // ── Init ──
     onMounted(async () => {
       chrome.storage.local.get(['scraperQueue'], (res) => {
         if (res.scraperQueue) queue.value = res.scraperQueue;
       });
-      await inspectActiveEnvironment();
+      await detectPlatform();
     });
 
-    const inspectActiveEnvironment = async () => {
+    // ── Platform Detection ──
+    const detectPlatform = async () => {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab) return;
       currentTab.value = tab;
 
       const url = tab.url || '';
-      let matchKey = Object.keys(masterRecipes).find(key => url.includes(key));
 
-      if (matchKey) {
-        currentPlatform.value = { detected: true, domainKey: matchKey, config: masterRecipes[matchKey] };
-        
-        chrome.storage.local.get(['tempWorkspaceState'], (res) => {
-          if (res.tempWorkspaceState && res.tempWorkspaceState.Url === url) {
-            workspaceData.value = res.tempWorkspaceState;
-            chrome.storage.local.get(['tempSelectorsState'], (selRes) => {
-              if (selRes.tempSelectorsState) runtimeSelectors.value = selRes.tempSelectorsState;
-            });
-          } else {
-            initializeForm(matchKey);
-          }
-        });
+      // Find matching recipe key — most specific match wins
+      const matchKey = Object.keys(masterRecipes)
+        .sort((a, b) => b.length - a.length) // longest key first for specificity
+        .find(key => url.includes(key));
+
+      if (!matchKey) {
+        setStatus('neutral', 'Navigate to a supported platform page.');
+        return;
       }
+
+      currentPlatform.value = {
+        detected: true,
+        domainKey: matchKey,
+        config: masterRecipes[matchKey]
+      };
+
+      // Try to restore saved state for this URL
+      chrome.storage.local.get(['tempWorkspaceState', 'tempSelectorsState', 'tempLearnedFields'], (res) => {
+        if (res.tempWorkspaceState && res.tempWorkspaceState.Url === url) {
+          workspaceData.value = res.tempWorkspaceState;
+          if (res.tempSelectorsState) runtimeSelectors.value = res.tempSelectorsState;
+          if (res.tempLearnedFields) learnedFields.value = res.tempLearnedFields;
+          setStatus('ready', 'Workspace restored from previous session.');
+        } else {
+          initForm(matchKey, tab);
+        }
+      });
     };
 
-    const initializeForm = (key) => {
+    // ── Form Initialisation ──
+    const initForm = (key, tab) => {
       const config = masterRecipes[key];
       runtimeSelectors.value = { ...config.selectors };
 
+      // Pre-fill static fields
       workspaceData.value = {
         Product: config.Product,
         Platform: config.Platform,
-        PlatformID: key === 'amazon.' ? (currentTab.value.url.match(/\/dp\/([A-Z0-9]{10})/i) || ['', ''])[1] : '',
-        PlatformType: currentTab.value.url.includes('/groups/') ? 'Group' : currentTab.value.url.includes('/in/') ? 'Profile' : 'Page',
-        Name: 'Auto-fetching...', 
-        Url: currentTab.value.url, 
-        Status: 'Active', 
-        Locale: 'en-US', 
-        Image: '', 
-        Description: '', 
-        Owner: parseOwner(currentTab.value.url)
+        PlatformID: extractASIN(tab.url),
+        PlatformType: extractPlatformType(tab.url, config.Product),
+        Name: '',
+        Url: tab.url,
+        Status: 'Active',
+        Locale: config.defaultLocale || 'en-US //or// US',
+        Image: '',
+        Description: '',
+        Owner: extractOwner(tab.url)
       };
 
-      saveTemporaryState();
+      saveState();
+      setStatus('loading', 'Auto-filling fields from page…');
 
-      // Reliable messaging loop with fallback error catcher
-      chrome.tabs.sendMessage(currentTab.value.id, { action: "runSelectors", selectors: config.selectors }, (res) => {
+      // Ask content script to run selectors
+      chrome.tabs.sendMessage(tab.id, { action: 'runSelectors', selectors: config.selectors }, (res) => {
         if (chrome.runtime.lastError || !res) {
-          // Connection dropped (tab needs manual reload refresh)
-          workspaceData.value.Name = '';
-          workspaceData.value.Description = '';
-          alert("Extension reloaded! Please refresh the current webpage tab to re-establish connection.");
+          setStatus('warning', 'Could not reach page — please refresh the tab and reopen the extension.');
           return;
         }
-        if (res && res.success) {
-          workspaceData.value.Name = res.data.Name || '';
-          workspaceData.value.Description = res.data.Description || '';
-          workspaceData.value.Image = res.data.Image || '';
-          saveTemporaryState();
+        if (res.success) {
+          const d = res.data;
+          workspaceData.value.Name = d.Name || '';
+          workspaceData.value.Description = d.Description || '';
+          workspaceData.value.Image = d.Image || '';
+
+          const missing = ['Name', 'Description', 'Image'].filter(f => !workspaceData.value[f]);
+          if (missing.length === 0) {
+            setStatus('ready', 'All fields auto-filled. Review and confirm.');
+          } else {
+            setStatus('warning', `Could not auto-fill: ${missing.join(', ')}. Paste the correct text into those fields.`);
+          }
+          saveState();
         }
       });
     };
 
-    const saveTemporaryState = () => {
-      chrome.storage.local.set({ tempWorkspaceState: workspaceData.value });
-      chrome.storage.local.set({ tempSelectorsState: runtimeSelectors.value });
+    // ── URL Parsers ──
+    const extractASIN = (url) => {
+      const match = url.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
+      return match ? match[1] : '';
     };
 
-    const handleLearningPaste = (event, field) => {
+    const extractPlatformType = (url, product) => {
+      if (product !== 'SOCIAL') return '';
+      if (url.includes('/groups/')) return 'Group';
+      if (url.includes('/in/')) return 'Profile';
+      return 'Page';
+    };
+
+    const extractOwner = (url) => {
+      try {
+        const path = new URL(url).pathname;
+        const parts = path.split('/').filter(Boolean);
+        // Skip known prefix segments
+        const skipSegments = ['company', 'in', 'school', 'showcase', 'groups', 'android-apps'];
+        const idx = parts.findIndex(p => skipSegments.includes(p));
+        if (idx !== -1 && parts[idx + 1]) return parts[idx + 1];
+        return parts[parts.length - 1] || '';
+      } catch { return ''; }
+    };
+
+    // ── Paste-to-Learn ──
+    const handlePaste = (event, field) => {
       const text = event.clipboardData.getData('text');
-      if (!text) return;
+      if (!text || !currentTab.value) return;
 
-      chrome.tabs.sendMessage(currentTab.value.id, { action: "traceTextSelector", text: text }, (res) => {
-        if (res && res.success && res.selector) {
-          // Update selectors object dynamically
-          runtimeSelectors.value[field] = res.selector;
-          saveTemporaryState();
-          alert(`Successfully mapped component indicator: ${field} => ${res.selector}`);
+      // Send text to engine to find its DOM selector
+      chrome.tabs.sendMessage(
+        currentTab.value.id,
+        { action: 'traceTextSelector', text: text.trim() },
+        (res) => {
+          if (res && res.success && res.selector) {
+            runtimeSelectors.value[field] = res.selector;
+            learnedFields.value[field] = true;
+            saveState();
+            setStatus('ready', `✓ Selector learned for "${field}": ${res.selector}`);
+          }
+          // If trace fails, the pasted value is still kept — field just won't have a learned selector
         }
+      );
+    };
+
+    // ── State Persistence ──
+    const saveState = () => {
+      chrome.storage.local.set({
+        tempWorkspaceState: workspaceData.value,
+        tempSelectorsState: runtimeSelectors.value,
+        tempLearnedFields: learnedFields.value
       });
     };
 
-    const stashToQueue = () => {
+    // ── Confirm Entry ──
+    const confirmEntry = () => {
       queue.value.push({ ...workspaceData.value });
       chrome.storage.local.set({ scraperQueue: queue.value });
-      chrome.storage.local.remove(['tempWorkspaceState', 'tempSelectorsState']);
-      resetActiveWorkspace();
+      chrome.storage.local.remove(['tempWorkspaceState', 'tempSelectorsState', 'tempLearnedFields']);
+      learnedFields.value = { Name: false, Description: false, Image: false };
+      setStatus('ready', `✓ Entry added. Queue: ${queue.value.length}`);
+      // Reset scraped fields, keep static ones
+      workspaceData.value.Name = '';
+      workspaceData.value.Description = '';
+      workspaceData.value.Image = '';
+      workspaceData.value.PlatformID = '';
     };
 
+    // ── Copy Snippet ──
     const copySnippet = () => {
-      const patchSnippet = {
+      const snippet = {
         [currentPlatform.value.domainKey]: {
           Product: workspaceData.value.Product,
           Platform: workspaceData.value.Platform,
-          selectors: { ...runtimeSelectors.value } // Locks in the newly learned parameters
+          defaultLocale: workspaceData.value.Locale,
+          selectors: { ...runtimeSelectors.value }
         }
       };
-      navigator.clipboard.writeText(JSON.stringify(patchSnippet, null, 2));
-      alert("Platform recipe code block copied successfully! Ready to update recipes.js.");
+      navigator.clipboard.writeText(JSON.stringify(snippet, null, 2));
+      setStatus('ready', '✓ Snippet copied — send to developer to hardcode selectors.');
     };
 
-    const downloadMasterCSV = () => {
-      const columns = ["Product", "Platform", "PlatformID", "PlatformType", "Name", "Url", "Status", "Locale", "Image", "Description", "Owner"];
-      const escape = (str) => {
-        const s = String(str ?? "");
-        return (s.includes(",") || s.includes('"') || s.includes("\n")) ? `"${s.replace(/"/g, '""')}"` : s;
+    // ── CSV Download ──
+    const downloadCSV = () => {
+      const columns = ['Product', 'Platform', 'PlatformID', 'PlatformType', 'Name', 'Url', 'Status', 'Locale', 'Image', 'Description', 'Owner'];
+      const escape = (val) => {
+        const s = String(val ?? '');
+        return (s.includes(',') || s.includes('"') || s.includes('\n'))
+          ? `"${s.replace(/"/g, '""')}"` : s;
       };
+      const rows = [columns.join(',')];
+      queue.value.forEach(row => rows.push(columns.map(c => escape(row[c])).join(',')));
 
-      const csvRows = [columns.join(",")];
-      queue.value.forEach(row => {
-        csvRows.push(columns.map(col => escape(row[col])).join(","));
-      });
-
-      const blob = new Blob([csvRows.join("\n")], { type: "text/csv;charset=utf-8;" });
-      const a = document.createElement("a");
+      const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+      const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `ingest_manifest_${new Date().toISOString().slice(0,10)}.csv`;
+      a.download = `omni_capture_${new Date().toISOString().slice(0, 10)}.csv`;
       a.click();
     };
 
-    const openDeveloperOptions = () => { chrome.runtime.openOptionsPage(); };
-    const resetActiveWorkspace = () => { 
-      workspaceData.value.Name = ''; workspaceData.value.Description = ''; workspaceData.value.Image = '';
-      workspaceData.value.PlatformID = ''; workspaceData.value.PlatformType = '';
+    // ── Helpers ──
+    const setStatus = (type, message) => {
+      statusType.value = type;
+      statusMessage.value = message;
     };
-    const parseOwner = (url) => { try { return new URL(url).pathname.split('/').filter(Boolean)[1] || ''; } catch(e) { return ''; } };
-    
+
+    const openOptions = () => chrome.runtime.openOptionsPage();
+
     const isFormValid = computed(() => {
       const base = workspaceData.value.Name && workspaceData.value.Description;
       if (workspaceData.value.Product === 'MARKETPLACES') return base && workspaceData.value.PlatformID;
@@ -270,32 +370,190 @@ export default {
       return base;
     });
 
-    return { queue, currentPlatform, workspaceData, isFormValid, handleLearningPaste, saveTemporaryState, stashToQueue, copySnippet, downloadMasterCSV, openDeveloperOptions };
+    const hasLearnedSelectors = computed(() =>
+      Object.values(learnedFields.value).some(Boolean)
+    );
+
+    return {
+      queue, currentPlatform, workspaceData, statusMessage, statusType,
+      learnedFields, recipes, isFormValid, hasLearnedSelectors,
+      handlePaste, saveState, confirmEntry, copySnippet, downloadCSV, openOptions
+    };
   }
 };
 </script>
 
 <style scoped>
-.app-container { width: 380px; max-height: 560px; padding: 16px; background: #0a0a0f; color: #e8e8f0; font-family: sans-serif; display: flex; flex-direction: column; }
-.app-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2a2a38; padding-bottom: 8px; }
-.badge { background: #1a1a24; border: 1px solid #3a3a52; padding: 2px 8px; border-radius: 4px; font-size: 11px; color: #00c896; }
-.meta-row { display: flex; justify-content: space-between; font-size: 11px; color: #8888a8; margin: 12px 0; flex-shrink: 0; }
-.scrollable-form { flex: 1; overflow-y: auto; max-height: 320px; padding-right: 4px; }
+.app-container {
+  width: 380px;
+  max-height: 580px;
+  background: #0a0a0f;
+  color: #e8e8f0;
+  font-family: 'IBM Plex Sans', sans-serif;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Header */
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 12px;
+  background: #111118;
+  border-bottom: 1px solid #2a2a38;
+  flex-shrink: 0;
+}
+.logo {
+  width: 28px; height: 28px;
+  background: #0a66c2;
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 15px; color: #fff;
+  flex-shrink: 0;
+}
+.header-text h1 { font-size: 13px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.header-text p { font-size: 10px; color: #555568; letter-spacing: 0.06em; margin-top: 1px; }
+.badge {
+  margin-left: auto;
+  background: #1a1a24; border: 1px solid #3a3a52;
+  padding: 2px 8px; border-radius: 4px;
+  font-size: 11px; color: #00c896;
+}
+
+/* Alert view */
+.alert-view {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 30px 20px; text-align: center; color: #555568;
+  gap: 12px;
+}
+.alert-view p { font-size: 13px; line-height: 1.5; }
+.supported-list {
+  display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;
+}
+.supported-list span {
+  background: #1a1a24; border: 1px solid #2a2a38;
+  padding: 2px 8px; border-radius: 4px; font-size: 11px; color: #8888a8;
+}
+
+/* Workspace */
+.workspace {
+  flex: 1; display: flex; flex-direction: column;
+  padding: 12px 16px; overflow: hidden;
+}
+
+/* Meta row */
+.meta-row { display: flex; gap: 6px; margin-bottom: 10px; flex-shrink: 0; }
+.meta-pill {
+  font-size: 10px; padding: 2px 8px; border-radius: 3px;
+  background: #1a1a24; border: 1px solid #2a2a38; color: #8888a8;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.meta-pill.accent { border-color: #0a66c2; color: #1177d4; }
+
+/* Status bar */
+.status-bar {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 10px; border-radius: 5px;
+  background: #111118; border: 1px solid #2a2a38;
+  margin-bottom: 12px; font-size: 11px; color: #8888a8;
+  flex-shrink: 0; line-height: 1.4;
+}
+.status-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #555568; flex-shrink: 0; margin-top: 3px;
+}
+.status-bar.ready .status-dot { background: #00c896; box-shadow: 0 0 5px #00c896; }
+.status-bar.ready { color: #e8e8f0; }
+.status-bar.warning .status-dot { background: #ffa502; box-shadow: 0 0 5px #ffa502; }
+.status-bar.warning { color: #ffa502; border-color: rgba(255,165,2,0.3); }
+.status-bar.loading .status-dot { background: #0a66c2; animation: blink 1s infinite; }
+.status-bar.error .status-dot { background: #ff4757; box-shadow: 0 0 5px #ff4757; }
+.status-bar.error { color: #ff4757; border-color: rgba(255,71,87,0.3); }
+
+@keyframes blink {
+  0%, 100% { opacity: 1; } 50% { opacity: 0.3; }
+}
+
+/* Form */
+.scrollable-form {
+  flex: 1; overflow-y: auto; padding-right: 4px;
+}
 .scrollable-form::-webkit-scrollbar { width: 4px; }
 .scrollable-form::-webkit-scrollbar-thumb { background: #2a2a38; border-radius: 2px; }
-.section-divider { font-size: 10px; color: #555568; text-transform: uppercase; letter-spacing: 0.05em; margin: 18px 0 10px 0; border-bottom: 1px dashed #2a2a38; padding-bottom: 4px; }
-.form-group { margin-bottom: 12px; }
-.form-group label { display: block; font-size: 11px; color: #8888a8; margin-bottom: 4px; text-transform: uppercase; }
-.form-group input, .form-group textarea { width: 100%; background: #111118; border: 1px solid #2a2a38; color: #e8e8f0; padding: 8px; border-radius: 4px; font-size: 12px; box-sizing: border-box; }
-.form-group textarea { height: 55px; resize: none; }
+
+.section-divider {
+  font-size: 10px; color: #555568; text-transform: uppercase;
+  letter-spacing: 0.06em; margin: 14px 0 10px;
+  border-bottom: 1px dashed #2a2a38; padding-bottom: 4px;
+}
+
+.form-group { margin-bottom: 10px; position: relative; }
+.form-group label {
+  display: block; font-size: 10px; color: #8888a8;
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;
+}
+.required { color: #ffa502; }
+
+.form-group input,
+.form-group textarea {
+  width: 100%; background: #111118; border: 1px solid #2a2a38;
+  color: #e8e8f0; padding: 7px 9px; border-radius: 4px;
+  font-size: 12px; box-sizing: border-box; outline: none;
+  transition: border-color 0.15s;
+}
+.form-group input:focus,
+.form-group textarea:focus { border-color: #3a3a52; }
+.form-group textarea { height: 60px; resize: none; }
+.readonly-field { color: #555568 !important; cursor: default; }
+
 .field-alert { border-color: #ffa502 !important; background: rgba(255,165,2,0.03) !important; }
-.button-footer { display: flex; gap: 8px; margin-top: 16px; flex-shrink: 0; }
-.btn-confirm { flex: 2; background: #00c896; color: #fff; border: none; padding: 10px; border-radius: 4px; font-weight: bold; cursor: pointer; }
-.btn-confirm:disabled { opacity: 0.4; cursor: not-allowed; }
-.btn-snippet { flex: 1; background: #1a1a24; border: 1px solid #3a3a52; color: #e8e8f0; padding: 10px; border-radius: 4px; cursor: pointer; }
-.queue-summary-actions { margin-top: 14px; padding-top: 12px; border-top: 1px solid #2a2a38; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
-.btn-download { width: 100%; background: #0a66c2; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-.btn-download:disabled { opacity: 0.3; }
-.btn-link { background: none; border: none; color: #8888a8; font-size: 11px; cursor: pointer; text-align: center; }
-.alert-view { padding: 30px 10px; text-align: center; color: #555568; font-size: 13px; }
+
+.learned-tag {
+  position: absolute; right: 8px; top: 0;
+  font-size: 9px; color: #00c896; letter-spacing: 0.04em;
+}
+
+/* Buttons */
+.button-footer {
+  display: flex; gap: 8px; margin-top: 14px; flex-shrink: 0;
+}
+.btn-confirm {
+  flex: 2; background: #00c896; color: #fff;
+  border: none; padding: 10px; border-radius: 4px;
+  font-weight: 600; font-size: 13px; cursor: pointer;
+  transition: opacity 0.15s;
+}
+.btn-confirm:disabled { opacity: 0.35; cursor: not-allowed; }
+.btn-confirm:hover:not(:disabled) { opacity: 0.9; }
+
+.btn-snippet {
+  flex: 1; background: #1a1a24; border: 1px solid #2a2a38;
+  color: #8888a8; padding: 10px; border-radius: 4px;
+  font-size: 12px; cursor: pointer; transition: border-color 0.15s, color 0.15s;
+}
+.btn-snippet:hover { border-color: #3a3a52; color: #e8e8f0; }
+.btn-snippet.has-learned { border-color: #0a66c2; color: #1177d4; }
+
+.queue-actions {
+  margin-top: 12px; padding-top: 10px;
+  border-top: 1px solid #2a2a38;
+  display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;
+}
+.btn-download {
+  width: 100%; background: #0a66c2; color: #fff;
+  border: none; padding: 9px; border-radius: 4px;
+  font-weight: 600; font-size: 12px; cursor: pointer;
+  transition: opacity 0.15s;
+}
+.btn-download:disabled { opacity: 0.3; cursor: not-allowed; }
+.btn-download:hover:not(:disabled) { opacity: 0.88; }
+
+.btn-link {
+  background: none; border: none; color: #555568;
+  font-size: 11px; cursor: pointer; text-align: center;
+}
+.btn-link:hover { color: #8888a8; }
 </style>
