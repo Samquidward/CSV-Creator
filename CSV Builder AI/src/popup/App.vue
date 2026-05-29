@@ -16,7 +16,7 @@
       <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="1.5"/><path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       <p>Navigate to a supported platform page to begin.</p>
       <div class="supported-list">
-        <span v-for="key in Object.keys(recipes)" :key="key">{{ recipes[key].Platform }}</span>
+        <span v-for="key in uniquePlatforms" :key="key">{{ key }}</span>
       </div>
     </div>
 
@@ -70,9 +70,20 @@
             @paste="handlePaste($event, 'Image')"
             @input="saveState"
             placeholder="Auto-filled or paste image URL…"
-            :class="{ 'field-alert': !workspaceData.Image }"
           />
           <span v-if="learnedFields.Image" class="learned-tag">✓ Learned</span>
+        </div>
+
+        <div class="form-group">
+          <label>Owner / Handle <span class="required">*</span></label>
+          <input
+            v-model="workspaceData.Owner"
+            @paste="handlePaste($event, 'Owner')"
+            @input="saveState"
+            placeholder="Auto-filled or paste to teach…"
+            :class="{ 'field-alert': !workspaceData.Owner }"
+          />
+          <span v-if="learnedFields.Owner" class="learned-tag">✓ Learned</span>
         </div>
 
         <div class="section-divider">Metadata</div>
@@ -100,18 +111,13 @@
         </div>
 
         <div class="form-group">
-          <label>Owner / Handle</label>
-          <input v-model="workspaceData.Owner" @input="saveState" placeholder="Auto-extracted from URL" />
-        </div>
-
-        <div class="form-group">
           <label>Locale</label>
-          <input v-model="workspaceData.Locale" @input="saveState" placeholder="e.g. en-US //or// US" />
+          <input v-model="workspaceData.Locale" @input="saveState" placeholder="e.g. United States" />
         </div>
 
         <div class="form-group">
           <label>URL</label>
-          <input v-model="workspaceData.Url" @input="saveState" readonly class="readonly-field" />
+          <input v-model="workspaceData.Url" readonly class="readonly-field" />
         </div>
 
       </div>
@@ -125,7 +131,7 @@
           @click="copySnippet"
           class="btn-snippet"
           :class="{ 'has-learned': hasLearnedSelectors }"
-          title="Copy learned selectors as code block"
+          title="Copy current selectors as code snippet to send to developer"
         >
           Copy Snippet
         </button>
@@ -154,14 +160,18 @@ export default {
     const currentPlatform = ref({ detected: false, domainKey: '', config: null });
     const statusMessage = ref('Detecting platform…');
     const statusType = ref('neutral');
-    const learnedFields = ref({ Name: false, Description: false, Image: false });
+    const learnedFields = ref({ Name: false, Description: false, Image: false, Owner: false });
     const runtimeSelectors = ref({});
-    const recipes = masterRecipes;
 
     const workspaceData = ref({
       Product: '', Platform: '', PlatformID: '', PlatformType: '',
       Name: '', Url: '', Status: 'Active', Locale: '', Image: '', Description: '', Owner: ''
     });
+
+    // Deduplicated platform names for the unsupported page view
+    const uniquePlatforms = computed(() =>
+      [...new Set(Object.values(masterRecipes).map(r => r.Platform))]
+    );
 
     // ── Init ──
     onMounted(async () => {
@@ -179,9 +189,9 @@ export default {
 
       const url = tab.url || '';
 
-      // Find matching recipe key — most specific match wins
+      // Longest key wins for specificity (amazon.co.uk before amazon.com)
       const matchKey = Object.keys(masterRecipes)
-        .sort((a, b) => b.length - a.length) // longest key first for specificity
+        .sort((a, b) => b.length - a.length)
         .find(key => url.includes(key));
 
       if (!matchKey) {
@@ -195,13 +205,13 @@ export default {
         config: masterRecipes[matchKey]
       };
 
-      // Try to restore saved state for this URL
+      // Try to restore saved state for this exact URL
       chrome.storage.local.get(['tempWorkspaceState', 'tempSelectorsState', 'tempLearnedFields'], (res) => {
         if (res.tempWorkspaceState && res.tempWorkspaceState.Url === url) {
           workspaceData.value = res.tempWorkspaceState;
           if (res.tempSelectorsState) runtimeSelectors.value = res.tempSelectorsState;
           if (res.tempLearnedFields) learnedFields.value = res.tempLearnedFields;
-          setStatus('ready', 'Workspace restored from previous session.');
+          setStatus('ready', 'Workspace restored. Review and confirm when ready.');
         } else {
           initForm(matchKey, tab);
         }
@@ -213,7 +223,6 @@ export default {
       const config = masterRecipes[key];
       runtimeSelectors.value = { ...config.selectors };
 
-      // Pre-fill static fields
       workspaceData.value = {
         Product: config.Product,
         Platform: config.Platform,
@@ -222,32 +231,36 @@ export default {
         Name: '',
         Url: tab.url,
         Status: 'Active',
-        Locale: config.defaultLocale || 'en-US //or// US',
+        Locale: config.defaultLocale || 'United States',
         Image: '',
         Description: '',
-        Owner: extractOwner(tab.url)
+        Owner: ''
       };
 
       saveState();
+      runScrape(tab, config.selectors);
+    };
+
+    // ── Run Scrape ──
+    const runScrape = (tab, selectors) => {
       setStatus('loading', 'Auto-filling fields from page…');
 
-      // Ask content script to run selectors
-      chrome.tabs.sendMessage(tab.id, { action: 'runSelectors', selectors: config.selectors }, (res) => {
+      chrome.tabs.sendMessage(tab.id, { action: 'runSelectors', selectors }, (res) => {
         if (chrome.runtime.lastError || !res) {
           setStatus('warning', 'Could not reach page — please refresh the tab and reopen the extension.');
           return;
         }
         if (res.success) {
-          const d = res.data;
-          workspaceData.value.Name = d.Name || '';
-          workspaceData.value.Description = d.Description || '';
-          workspaceData.value.Image = d.Image || '';
+          workspaceData.value.Name        = res.data.Name        || '';
+          workspaceData.value.Description = res.data.Description || '';
+          workspaceData.value.Image       = res.data.Image       || '';
+          workspaceData.value.Owner       = res.data.Owner       || '';
 
-          const missing = ['Name', 'Description', 'Image'].filter(f => !workspaceData.value[f]);
+          const missing = ['Name', 'Description', 'Owner'].filter(f => !workspaceData.value[f]);
           if (missing.length === 0) {
-            setStatus('ready', 'All fields auto-filled. Review and confirm.');
+            setStatus('ready', 'All fields filled. Review and confirm.');
           } else {
-            setStatus('warning', `Could not auto-fill: ${missing.join(', ')}. Paste the correct text into those fields.`);
+            setStatus('warning', `Could not auto-fill: ${missing.join(', ')}. Paste the correct text into those fields to teach the extension.`);
           }
           saveState();
         }
@@ -267,24 +280,16 @@ export default {
       return 'Page';
     };
 
-    const extractOwner = (url) => {
-      try {
-        const path = new URL(url).pathname;
-        const parts = path.split('/').filter(Boolean);
-        // Skip known prefix segments
-        const skipSegments = ['company', 'in', 'school', 'showcase', 'groups', 'android-apps'];
-        const idx = parts.findIndex(p => skipSegments.includes(p));
-        if (idx !== -1 && parts[idx + 1]) return parts[idx + 1];
-        return parts[parts.length - 1] || '';
-      } catch { return ''; }
-    };
-
     // ── Paste-to-Learn ──
     const handlePaste = (event, field) => {
       const text = event.clipboardData.getData('text');
       if (!text || !currentTab.value) return;
 
-      // Send text to engine to find its DOM selector
+      // Immediately update workspaceData so isFormValid reacts right away
+      // (v-model hasn't processed the paste yet at this point)
+      workspaceData.value[field] = text.trim();
+      saveState();
+
       chrome.tabs.sendMessage(
         currentTab.value.id,
         { action: 'traceTextSelector', text: text.trim() },
@@ -293,9 +298,10 @@ export default {
             runtimeSelectors.value[field] = res.selector;
             learnedFields.value[field] = true;
             saveState();
-            setStatus('ready', `✓ Selector learned for "${field}": ${res.selector}`);
+            setStatus('ready', `✓ Selector learned for "${field}" — Copy Snippet will include it.`);
+          } else {
+            setStatus('warning', `Value saved for "${field}" but no selector found — paste-to-learn only works with text visible on the page.`);
           }
-          // If trace fails, the pasted value is still kept — field just won't have a learned selector
         }
       );
     };
@@ -314,27 +320,42 @@ export default {
       queue.value.push({ ...workspaceData.value });
       chrome.storage.local.set({ scraperQueue: queue.value });
       chrome.storage.local.remove(['tempWorkspaceState', 'tempSelectorsState', 'tempLearnedFields']);
-      learnedFields.value = { Name: false, Description: false, Image: false };
-      setStatus('ready', `✓ Entry added. Queue: ${queue.value.length}`);
-      // Reset scraped fields, keep static ones
-      workspaceData.value.Name = '';
+
+      learnedFields.value = { Name: false, Description: false, Image: false, Owner: false };
+
+      setStatus('ready', `✓ Entry added (${queue.value.length} in queue). Ready for next.`);
+
+      // Reset scraped fields only — keep platform context
+      workspaceData.value.Name        = '';
       workspaceData.value.Description = '';
-      workspaceData.value.Image = '';
-      workspaceData.value.PlatformID = '';
+      workspaceData.value.Image       = '';
+      workspaceData.value.Owner       = '';
+      workspaceData.value.PlatformID  = extractASIN(workspaceData.value.Url);
+
+      // Re-scrape immediately so button re-enables if selectors still work
+      if (currentTab.value && currentPlatform.value.config) {
+        runScrape(currentTab.value, runtimeSelectors.value);
+      }
     };
 
     // ── Copy Snippet ──
+    // Outputs just the inner entry so it can be dropped straight into recipes.js
     const copySnippet = () => {
-      const snippet = {
-        [currentPlatform.value.domainKey]: {
-          Product: workspaceData.value.Product,
-          Platform: workspaceData.value.Platform,
-          defaultLocale: workspaceData.value.Locale,
-          selectors: { ...runtimeSelectors.value }
-        }
+      const key = currentPlatform.value.domainKey;
+      const entry = {
+        Product: workspaceData.value.Product,
+        Platform: workspaceData.value.Platform,
+        defaultLocale: workspaceData.value.Locale,
+        selectors: { ...runtimeSelectors.value }
       };
-      navigator.clipboard.writeText(JSON.stringify(snippet, null, 2));
-      setStatus('ready', '✓ Snippet copied — send to developer to hardcode selectors.');
+      // Format as a single key-value pair ready to paste into the masterRecipes object
+      const inner = JSON.stringify(entry, null, 2)
+        .split('\n')
+        .map((line, i) => i === 0 ? line : '  ' + line)
+        .join('\n');
+      const output = `"${key}": ${inner},`;
+      navigator.clipboard.writeText(output);
+      setStatus('ready', '✓ Snippet copied — paste this entry directly into recipes.js.');
     };
 
     // ── CSV Download ──
@@ -364,7 +385,7 @@ export default {
     const openOptions = () => chrome.runtime.openOptionsPage();
 
     const isFormValid = computed(() => {
-      const base = workspaceData.value.Name && workspaceData.value.Description;
+      const base = workspaceData.value.Name && workspaceData.value.Description && workspaceData.value.Owner;
       if (workspaceData.value.Product === 'MARKETPLACES') return base && workspaceData.value.PlatformID;
       if (workspaceData.value.Product === 'SOCIAL') return base && workspaceData.value.PlatformType;
       return base;
@@ -376,7 +397,7 @@ export default {
 
     return {
       queue, currentPlatform, workspaceData, statusMessage, statusType,
-      learnedFields, recipes, isFormValid, hasLearnedSelectors,
+      learnedFields, uniquePlatforms, isFormValid, hasLearnedSelectors,
       handlePaste, saveState, confirmEntry, copySnippet, downloadCSV, openOptions
     };
   }
@@ -395,7 +416,6 @@ export default {
   overflow: hidden;
 }
 
-/* Header */
 .app-header {
   display: flex;
   align-items: center;
@@ -422,7 +442,6 @@ export default {
   font-size: 11px; color: #00c896;
 }
 
-/* Alert view */
 .alert-view {
   flex: 1; display: flex; flex-direction: column;
   align-items: center; justify-content: center;
@@ -438,13 +457,11 @@ export default {
   padding: 2px 8px; border-radius: 4px; font-size: 11px; color: #8888a8;
 }
 
-/* Workspace */
 .workspace {
   flex: 1; display: flex; flex-direction: column;
   padding: 12px 16px; overflow: hidden;
 }
 
-/* Meta row */
 .meta-row { display: flex; gap: 6px; margin-bottom: 10px; flex-shrink: 0; }
 .meta-pill {
   font-size: 10px; padding: 2px 8px; border-radius: 3px;
@@ -453,7 +470,6 @@ export default {
 }
 .meta-pill.accent { border-color: #0a66c2; color: #1177d4; }
 
-/* Status bar */
 .status-bar {
   display: flex; align-items: flex-start; gap: 8px;
   padding: 8px 10px; border-radius: 5px;
@@ -477,7 +493,6 @@ export default {
   0%, 100% { opacity: 1; } 50% { opacity: 0.3; }
 }
 
-/* Form */
 .scrollable-form {
   flex: 1; overflow-y: auto; padding-right: 4px;
 }
@@ -508,7 +523,6 @@ export default {
 .form-group textarea:focus { border-color: #3a3a52; }
 .form-group textarea { height: 60px; resize: none; }
 .readonly-field { color: #555568 !important; cursor: default; }
-
 .field-alert { border-color: #ffa502 !important; background: rgba(255,165,2,0.03) !important; }
 
 .learned-tag {
@@ -516,7 +530,6 @@ export default {
   font-size: 9px; color: #00c896; letter-spacing: 0.04em;
 }
 
-/* Buttons */
 .button-footer {
   display: flex; gap: 8px; margin-top: 14px; flex-shrink: 0;
 }
